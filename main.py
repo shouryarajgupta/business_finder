@@ -3,43 +3,142 @@ import re
 import time
 from typing import Dict, List
 import googlemaps
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import pandas as pd
 from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import threading
 from datetime import datetime
+import json
+import traceback
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+def log_step(step: str, error: bool = False):
+    """Helper function to print visually distinct log messages."""
+    line = "=" * 50
+    status = "ERROR" if error else "START"
+    print(f"\n{line}")
+    print(f"{status}: {step}")
+    print(f"{line}\n")
 
 # Load environment variables
 load_dotenv()
 
 class BusinessFinder:
     def __init__(self):
-        api_key = os.getenv('GOOGLE_MAPS_API_KEY')
-        print(f"Initializing with API key: {api_key[:10]}...")
-        self.gmaps = googlemaps.Client(key=api_key)
-        self.SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-        self.spreadsheet_id = os.getenv('SPREADSHEET_ID')
-        self.sheets_service = self._initialize_sheets_service()
-        self.MAX_RESULTS = 20
-        self.SEARCH_TIMEOUT = 60  # seconds
+        log_step("Initializing BusinessFinder")
+        try:
+            # Validate Google Maps API Key
+            self.api_key = os.getenv('GOOGLE_MAPS_API_KEY')
+            if not self.api_key:
+                log_step("Google Maps API key not found", error=True)
+                raise ValueError("Google Maps API key not found in environment variables")
+            print(f"✓ Found Maps API key: {self.api_key[:10]}...")
+            
+            # Validate Spreadsheet ID
+            self.spreadsheet_id = os.getenv('SPREADSHEET_ID')
+            if not self.spreadsheet_id:
+                log_step("Spreadsheet ID not found", error=True)
+                raise ValueError("Spreadsheet ID not found in environment variables")
+            print(f"✓ Found spreadsheet ID: {self.spreadsheet_id}")
+            
+            # Initialize Google Maps client
+            log_step("Initializing Google Maps Client")
+            self.gmaps = googlemaps.Client(key=self.api_key)
+            print("✓ Google Maps client initialized successfully")
+            
+            self.SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+            
+            # Initialize Sheets service
+            log_step("Initializing Google Sheets Service")
+            self.sheets_service = self._initialize_sheets_service()
+            print("✓ Google Sheets service initialized successfully")
+            
+            self.MAX_RESULTS = 20
+            self.SEARCH_TIMEOUT = 60  # seconds
+            self.SHEET_NAME_MAX_LENGTH = 100  # Google Sheets limit
+            
+            log_step("BusinessFinder Initialization Complete")
+            
+        except Exception as e:
+            log_step(f"BusinessFinder Initialization Failed: {str(e)}", error=True)
+            print(f"Error traceback:\n{traceback.format_exc()}")
+            raise
 
     def _initialize_sheets_service(self):
-        """Initialize Google Sheets API service."""
-        creds = None
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', self.SCOPES)
-        if not creds or not creds.valid:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', self.SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
-        return build('sheets', 'v4', credentials=creds)
+        """Initialize Google Sheets API service using service account."""
+        log_step("Setting up Google Sheets Authentication")
+        try:
+            # Get and validate service account info
+            service_account_key = os.getenv('GOOGLE_SERVICE_ACCOUNT_KEY')
+            if not service_account_key:
+                log_step("Service Account Key Not Found", error=True)
+                print("CRITICAL: GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set")
+                raise ValueError("GOOGLE_SERVICE_ACCOUNT_KEY not found in environment variables")
+            print("✓ Found service account key in environment")
+            
+            try:
+                print("Parsing service account JSON...")
+                service_account_info = json.loads(service_account_key)
+                print("✓ Successfully parsed service account JSON")
+            except json.JSONDecodeError as e:
+                log_step("Invalid Service Account JSON", error=True)
+                print(f"CRITICAL: Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY as JSON: {str(e)}")
+                raise ValueError(f"Invalid JSON in GOOGLE_SERVICE_ACCOUNT_KEY: {str(e)}")
+            
+            # Validate required fields
+            required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
+            missing_fields = [field for field in required_fields if field not in service_account_info]
+            if missing_fields:
+                log_step("Missing Required Fields in Service Account", error=True)
+                print(f"CRITICAL: Service account JSON is missing fields: {', '.join(missing_fields)}")
+                raise ValueError(f"Service account key missing required fields: {', '.join(missing_fields)}")
+            
+            print(f"✓ Using service account email: {service_account_info.get('client_email')}")
+            
+            log_step("Creating Google Sheets Credentials")
+            try:
+                credentials = service_account.Credentials.from_service_account_info(
+                    service_account_info,
+                    scopes=self.SCOPES
+                )
+                print("✓ Successfully created service account credentials")
+            except Exception as e:
+                log_step("Failed to Create Credentials", error=True)
+                print(f"CRITICAL: Could not create service account credentials: {str(e)}")
+                print(f"Error traceback:\n{traceback.format_exc()}")
+                raise ValueError(f"Failed to create service account credentials: {str(e)}")
+            
+            log_step("Building Google Sheets Service")
+            try:
+                sheets_service = build('sheets', 'v4', credentials=credentials)
+                print("✓ Successfully built Google Sheets service")
+                
+                # Test the service with a simple API call
+                log_step("Testing Google Sheets API Access")
+                sheets_service.spreadsheets().get(
+                    spreadsheetId=self.spreadsheet_id
+                ).execute()
+                print("✓ Successfully verified Google Sheets API access")
+                
+                return sheets_service
+                
+            except Exception as e:
+                log_step("Failed to Initialize Sheets Service", error=True)
+                print(f"CRITICAL: Failed to initialize or test Google Sheets service: {str(e)}")
+                print(f"Error traceback:\n{traceback.format_exc()}")
+                raise ValueError(f"Failed to initialize Google Sheets service: {str(e)}")
+            
+        except Exception as e:
+            error_details = traceback.format_exc()
+            log_step(f"Sheets Authentication Failed: {str(e)}", error=True)
+            print(f"CRITICAL: Authentication failed with error: {str(e)}")
+            print(f"Error traceback:\n{error_details}")
+            raise ValueError(f"Failed to initialize Google Sheets service: {str(e)}")
 
     def validate_postal_code(self, postal_code: str, country: str) -> bool:
         """Validate postal code format based on country."""
@@ -49,12 +148,29 @@ class BusinessFinder:
             pattern = r'^\d{6}$'
         return bool(re.match(pattern, postal_code))
 
-    def _create_new_sheet(self, sheet_name: str = None) -> str:
-        """Create a new sheet in the spreadsheet."""
-        if not sheet_name:
-            sheet_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+    def _sanitize_sheet_name(self, name: str) -> str:
+        """Sanitize sheet name to comply with Google Sheets requirements."""
+        # Remove or replace invalid characters
+        invalid_chars = r'[\\*?/\[\]:]'
+        name = re.sub(invalid_chars, '_', name)
         
+        # Truncate if too long
+        if len(name) > self.SHEET_NAME_MAX_LENGTH:
+            name = name[:self.SHEET_NAME_MAX_LENGTH - 10] + datetime.now().strftime("_%H%M%S")
+        
+        return name
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def _create_new_sheet(self, sheet_name: str = None) -> str:
+        """Create a new sheet in the spreadsheet with retry logic."""
+        log_step(f"Creating New Sheet: {sheet_name or 'auto-generated'}")
         try:
+            if not sheet_name:
+                sheet_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            sheet_name = self._sanitize_sheet_name(sheet_name)
+            print(f"Using sanitized sheet name: {sheet_name}")
+            
             request = {
                 'addSheet': {
                     'properties': {
@@ -68,13 +184,15 @@ class BusinessFinder:
                 body={'requests': [request]}
             ).execute()
             
+            print(f"✓ Successfully created new sheet: {sheet_name}")
             return sheet_name
             
         except HttpError as e:
             if 'already exists' in str(e):
-                # If sheet name exists, append timestamp
+                print(f"Sheet name '{sheet_name}' already exists, generating new name...")
                 new_name = f"{sheet_name}_{datetime.now().strftime('%H%M%S')}"
                 return self._create_new_sheet(new_name)
+            log_step(f"Failed to Create Sheet: {str(e)}", error=True)
             raise
 
     def _search_with_timeout(self, postal_code: str, keywords: List[str], country: str) -> List[Dict]:
@@ -97,52 +215,65 @@ class BusinessFinder:
                 location = geocode_result[0]['geometry']['location']
                 print(f"Location found: {location}")
                 
-                # Search for each keyword
+                # Search for each keyword with exponential backoff
                 for keyword in keywords:
                     search_query = f"{keyword} in {postal_code}"
                     print(f"Searching for: {search_query}")
                     
-                    places_result = self.gmaps.places(
-                        query=search_query,
-                        location=(location['lat'], location['lng']),
-                        radius=5000  # 5km radius
-                    )
+                    try:
+                        places_result = self.gmaps.places(
+                            query=search_query,
+                            location=(location['lat'], location['lng']),
+                            radius=5000  # 5km radius
+                        )
 
-                    places = places_result.get('results', [])[:self.MAX_RESULTS]
-                    print(f"Found {len(places)} results for '{keyword}'")
+                        places = places_result.get('results', [])[:self.MAX_RESULTS]
+                        print(f"Found {len(places)} results for '{keyword}'")
 
-                    for place in places:
-                        place_details = self.gmaps.place(place['place_id'], 
-                            fields=['name', 'formatted_address', 'formatted_phone_number', 
-                                   'website', 'url', 'business_status'])
-                        
-                        details = place_details['result']
-                        
-                        business_info = {
-                            'name': details.get('name', ''),
-                            'address': details.get('formatted_address', ''),
-                            'phone': details.get('formatted_phone_number', ''),
-                            'website': details.get('website', ''),
-                            'google_maps_url': details.get('url', ''),
-                            'email': self._extract_email(details.get('website', '')),
-                            'business_status': details.get('business_status', ''),
-                            'postal_code': postal_code,
-                            'keyword': keyword
-                        }
-                        result.append(business_info)
-                        print(f"Added business: {business_info['name']}")
-                        time.sleep(1)
+                        for place in places:
+                            try:
+                                place_details = self.gmaps.place(place['place_id'], 
+                                    fields=['name', 'formatted_address', 'formatted_phone_number', 
+                                           'website', 'url', 'business_status'])
+                                
+                                details = place_details.get('result', {})
+                                
+                                business_info = {
+                                    'name': details.get('name', ''),
+                                    'address': details.get('formatted_address', ''),
+                                    'phone': details.get('formatted_phone_number', ''),
+                                    'website': details.get('website', ''),
+                                    'google_maps_url': details.get('url', ''),
+                                    'email': self._extract_email(details.get('website', '')),
+                                    'business_status': details.get('business_status', ''),
+                                    'postal_code': postal_code,
+                                    'keyword': keyword
+                                }
+                                result.append(business_info)
+                                print(f"Added business: {business_info['name']}")
+                                
+                                # Exponential backoff instead of fixed sleep
+                                time.sleep(min(1 * (1.5 ** len(result)), 5))
+                                
+                            except Exception as e:
+                                print(f"Error processing place {place.get('place_id')}: {str(e)}")
+                                continue
+                            
+                    except Exception as e:
+                        print(f"Error searching for keyword '{keyword}': {str(e)}")
+                        continue
                     
             except Exception as e:
                 error_message = str(e)
                 print(f"Error during search: {error_message}")
+                print(f"Error traceback: {traceback.format_exc()}")
 
         # Execute search with timeout
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(search_task)
             try:
                 future.result(timeout=self.SEARCH_TIMEOUT)
-            except TimeoutError:
+            except (FuturesTimeoutError, TimeoutError) as e:
                 error_message = f"Search timed out after {self.SEARCH_TIMEOUT} seconds"
                 print(error_message)
 
@@ -196,45 +327,54 @@ class BusinessFinder:
             return ''
 
     def export_to_sheets(self, businesses: List[Dict], sheet_name: str = None) -> str:
-        """Export business data to Google Sheets."""
+        """Export business data to Google Sheets using append."""
         if not businesses:
             return None
 
         # Create new sheet
         sheet_name = self._create_new_sheet(sheet_name)
 
-        # Prepare the data
-        headers = ['Name', 'Address', 'Phone', 'Website', 'Email', 'Google Maps URL', 'Status', 'Postal Code', 'Keyword']
-        rows = [[
-            business['name'],
-            business['address'],
-            business['phone'],
-            business['website'],
-            business['email'],
-            business['google_maps_url'],
-            business['business_status'],
-            business['postal_code'],
-            business['keyword']
-        ] for business in businesses]
-
         try:
-            # Update the new sheet
-            range_name = f"{sheet_name}!A1:I{len(rows) + 1}"
-            values = [headers] + rows
-            body = {'values': values}
-            
+            # Prepare the data
+            headers = ['Name', 'Address', 'Phone', 'Website', 'Email', 'Google Maps URL', 'Status', 'Postal Code', 'Keyword']
+            rows = [[
+                business.get('name', ''),
+                business.get('address', ''),
+                business.get('phone', ''),
+                business.get('website', ''),
+                business.get('email', ''),
+                business.get('google_maps_url', ''),
+                business.get('business_status', ''),
+                business.get('postal_code', ''),
+                business.get('keyword', '')
+            ] for business in businesses]
+
+            # First, update headers
+            range_name = f"{sheet_name}!A1:I1"
             self.sheets_service.spreadsheets().values().update(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_name,
                 valueInputOption='RAW',
-                body=body
+                body={'values': [headers]}
+            ).execute()
+
+            # Then append data
+            range_name = f"{sheet_name}!A2:I{len(rows) + 1}"
+            self.sheets_service.spreadsheets().values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range=range_name,
+                valueInputOption='RAW',
+                insertDataOption='INSERT_ROWS',
+                body={'values': rows}
             ).execute()
             
             print(f"Successfully exported {len(businesses)} businesses to sheet '{sheet_name}'")
             return sheet_name
             
         except Exception as e:
+            error_details = traceback.format_exc()
             print(f"Error exporting to sheets: {str(e)}")
+            print(f"Error traceback: {error_details}")
             raise
 
 def main():
