@@ -245,11 +245,36 @@ class BusinessFinder:
                         places_result = self.gmaps.places(
                             query=search_query,
                             location=(location['lat'], location['lng']),
-                            radius=5000  # 5km radius
+                            radius=5000,  # 5km radius
+                            page_token=None  # Initialize page token
                         )
 
-                        places = places_result.get('results', [])[:max_results]
-                        print(f"Found {len(places)} results for '{keyword}'")
+                        places = places_result.get('results', [])
+                        total_places = len(places)
+                        print(f"Initial batch: Found {total_places} results for '{keyword}'")
+
+                        # Keep fetching next pages until we have enough results or no more pages
+                        while (total_places < max_results and 
+                               'next_page_token' in places_result and 
+                               places_result['next_page_token']):
+                            # Wait before requesting next page (Google API requirement)
+                            time.sleep(2)
+                            
+                            places_result = self.gmaps.places(
+                                query=search_query,
+                                location=(location['lat'], location['lng']),
+                                radius=5000,
+                                page_token=places_result['next_page_token']
+                            )
+                            
+                            new_places = places_result.get('results', [])
+                            places.extend(new_places)
+                            total_places = len(places)
+                            print(f"Next page: Found {len(new_places)} additional results, total {total_places}")
+
+                        # Trim to max_results if we got more
+                        places = places[:max_results]
+                        print(f"Final: Using {len(places)} results for '{keyword}'")
 
                         # Process places in chunks to manage memory
                         chunk_size = min(5, max(2, max_results // 10))  # Adjust chunk size based on max_results
