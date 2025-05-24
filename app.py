@@ -69,20 +69,33 @@ def process_allowed_emails(email_string: str) -> set:
             print(f"! Skipped invalid email: {repr(email)}")
     return emails
 
+def process_allowed_domains(domain_string: str) -> set:
+    """Process comma-separated domain string into a set of valid domains."""
+    domains = set()
+    if not domain_string:
+        return domains
+        
+    print(f"Processing domain string: {repr(domain_string)}")
+    # Split by comma and handle optional spaces
+    for domain in domain_string.split(','):
+        cleaned_domain = domain.strip().lower()
+        if cleaned_domain:  # Basic domain validation
+            domains.add(cleaned_domain)
+            print(f"✓ Added authorized domain: {cleaned_domain}")
+        else:
+            print(f"! Skipped invalid domain: {repr(domain)}")
+    return domains
+
 # Get allowed emails from environment with multiple fallbacks
 raw_emails = os.getenv('ALLOWED_EMAILS')  # Try exact match first
-if raw_emails is None:
-    # Try alternate cases if exact match fails
-    for var in os.environ:
-        if var.upper() == 'ALLOWED_EMAILS':
-            raw_emails = os.environ[var]
-            print(f"Found ALLOWED_EMAILS under different case: {var}")
-            break
+raw_domains = os.getenv('ALLOWED_DOMAINS')  # Try exact match first
 
 print(f"Raw ALLOWED_EMAILS value: {repr(raw_emails)}")
+print(f"Raw ALLOWED_DOMAINS value: {repr(raw_domains)}")
 
-# Process the emails
+# Process the emails and domains
 ALLOWED_EMAILS = process_allowed_emails(raw_emails) if raw_emails else set()
+ALLOWED_DOMAINS = process_allowed_domains(raw_domains) if raw_domains else {'thinkananta.com'}  # Default allowed domain
 
 # Fallback to default if no valid emails found
 if not ALLOWED_EMAILS:
@@ -91,7 +104,8 @@ if not ALLOWED_EMAILS:
     ALLOWED_EMAILS = {default_admin}
 
 print(f"Final authorized emails ({len(ALLOWED_EMAILS)}):", sorted(list(ALLOWED_EMAILS)))
-log_auth("Email authorization configured", emails=sorted(list(ALLOWED_EMAILS)))
+print(f"Final authorized domains ({len(ALLOWED_DOMAINS)}):", sorted(list(ALLOWED_DOMAINS)))
+log_auth("Authorization configured", emails=sorted(list(ALLOWED_EMAILS)), domains=sorted(list(ALLOWED_DOMAINS)))
 
 # Also check if we're running on Render
 if os.getenv('RENDER') is not None:
@@ -187,19 +201,30 @@ def authorize():
             
         log_auth("User info retrieved", email=email)
         print(f"Checking authorization for: {email}")
-        print(f"Currently authorized emails: {sorted(list(ALLOWED_EMAILS))}")
         
-        if email in ALLOWED_EMAILS:
+        # Check both specific email and domain
+        email_domain = email.split('@')[-1].lower()
+        is_allowed = email in ALLOWED_EMAILS or email_domain in ALLOWED_DOMAINS
+        
+        print(f"Email check: {email in ALLOWED_EMAILS}")
+        print(f"Domain check ({email_domain}): {email_domain in ALLOWED_DOMAINS}")
+        print(f"Final authorization result: {is_allowed}")
+        
+        if is_allowed:
             user = User(email)
             login_user(user)
-            log_auth("User successfully authenticated", email=email)
+            log_auth("User successfully authenticated", 
+                    email=email, 
+                    auth_type="specific_email" if email in ALLOWED_EMAILS else "domain")
             return redirect(url_for('home'))
             
         log_auth("Unauthorized email attempt", error=True, 
-                email=email, 
-                allowed_emails=sorted(list(ALLOWED_EMAILS)))
+                email=email,
+                domain=email_domain,
+                allowed_emails=sorted(list(ALLOWED_EMAILS)),
+                allowed_domains=sorted(list(ALLOWED_DOMAINS)))
         return (f"Access denied. Your email ({email}) is not authorized. "
-                "Please contact the administrator to add your email to the allowed list."), 403
+                "Please contact the administrator to add your email or domain to the allowed list."), 403
         
     except Exception as e:
         error_details = traceback.format_exc()
