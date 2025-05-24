@@ -20,4 +20,4 @@ services:
       - key: ALLOWED_EMAIL
         value: shouryarajgupta@gmail.com
       - key: SECRET_KEY
-        generateValue: true 
+        value: gYzTBuTjG_r67NawXY4CBNHMhDOtVZiVGf3B8P8z4WQ 
