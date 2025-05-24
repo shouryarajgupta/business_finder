@@ -47,11 +47,27 @@ except Exception as e:
 
 # OAuth Setup
 oauth = OAuth(app)
-ALLOWED_EMAILS = set(email.strip().lower() for email in os.getenv('ALLOWED_EMAILS', '').split(',') if email.strip())
+
+# Debug: Print raw environment variable
+raw_emails = os.getenv('ALLOWED_EMAILS', '')
+print(f"Raw ALLOWED_EMAILS value: {raw_emails}")
+
+# Process emails more carefully
+ALLOWED_EMAILS = set()
+if raw_emails:
+    for email in raw_emails.split(','):
+        cleaned_email = email.strip().lower()
+        if cleaned_email:  # Only add non-empty emails
+            ALLOWED_EMAILS.add(cleaned_email)
+            print(f"Added authorized email: {cleaned_email}")
+
+# Fallback if no valid emails found
 if not ALLOWED_EMAILS:
     log_auth("No allowed emails configured, defaulting to admin email")
     ALLOWED_EMAILS = {'shouryarajgupta@gmail.com'}  # Default admin email
-log_auth("Allowed emails configured", emails=list(ALLOWED_EMAILS))
+
+print("Final authorized emails:", sorted(list(ALLOWED_EMAILS)))
+log_auth("Allowed emails configured", emails=sorted(list(ALLOWED_EMAILS)))
 
 # User class for Flask-Login
 class User(UserMixin):
@@ -133,13 +149,14 @@ def authorize():
         # Use the correct OpenID Connect userinfo endpoint
         resp = google.get('https://openidconnect.googleapis.com/v1/userinfo')
         user_info = resp.json()
-        email = user_info.get('email', '').strip()
+        email = user_info.get('email', '').strip().lower()  # Ensure email is lowercase
         
         if not email:
             log_auth("No email in user info", error=True, user_info=user_info)
             return "Email not provided by Google. Please ensure you have granted email permission.", 400
             
         log_auth("User info retrieved", email=email)
+        print(f"Checking if email {email} is in allowed emails: {sorted(list(ALLOWED_EMAILS))}")
         
         if email in ALLOWED_EMAILS:
             user = User(email)
@@ -147,7 +164,7 @@ def authorize():
             log_auth("User successfully authenticated", email=email)
             return redirect(url_for('home'))
             
-        log_auth("Unauthorized email attempt", error=True, email=email)
+        log_auth("Unauthorized email attempt", error=True, email=email, allowed_emails=sorted(list(ALLOWED_EMAILS)))
         return f"Access denied. Your email ({email}) is not authorized to use this application. Please contact the administrator.", 403
         
     except Exception as e:
