@@ -126,7 +126,8 @@ def authorize():
         token = google.authorize_access_token()
         log_auth("Access token obtained")
         
-        resp = google.get('userinfo')
+        # Use the correct OpenID Connect userinfo endpoint
+        resp = google.get('https://openidconnect.googleapis.com/v1/userinfo')
         user_info = resp.json()
         email = user_info.get('email')
         
