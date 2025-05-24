@@ -52,6 +52,7 @@ class BusinessFinder:
             print("✓ Google Maps client initialized successfully")
             
             self.SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+            self.SHEET_NAME_MAX_LENGTH = 100  # Google Sheets maximum sheet name length
             
             # Initialize Sheets service
             log_step("Initializing Google Sheets Service")
@@ -374,10 +375,14 @@ class BusinessFinder:
         if not businesses:
             return None
 
-        # Create new sheet
-        sheet_name = self._create_new_sheet(sheet_name)
-
         try:
+            # Create new sheet with timestamp if none provided
+            if not sheet_name:
+                sheet_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # Create new sheet
+            sheet_name = self._create_new_sheet(sheet_name)
+
             # Prepare the data
             headers = ['Name', 'Address', 'Phone', 'Website', 'Email', 'Google Maps URL', 'Status', 'Postal Code', 'Keyword']
             rows = [[
@@ -418,7 +423,7 @@ class BusinessFinder:
             error_details = traceback.format_exc()
             print(f"Error exporting to sheets: {str(e)}")
             print(f"Error traceback: {error_details}")
-            raise
+            raise ValueError(f"Failed to export to Google Sheets: {str(e)}")
 
 def main():
     finder = BusinessFinder()
