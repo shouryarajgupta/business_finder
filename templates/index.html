@@ -105,22 +105,6 @@
                        placeholder="E.g. restaurant, cafe, school">
                 <div class="form-text text-muted">Comma-separated, e.g. restaurant, cafe</div>
             </div>
-            <div class="form-group mb-3">
-                <label for="max_results" class="form-label">Number of Results:</label>
-                <select class="form-select" id="max_results" name="max_results" required>
-                    <option value="10">10 results</option>
-                    <option value="20" selected>20 results</option>
-                    <option value="30">30 results</option>
-                    <option value="40">40 results</option>
-                    <option value="50">50 results</option>
-                    <option value="60">60 results</option>
-                    <option value="70">70 results</option>
-                    <option value="80">80 results</option>
-                    <option value="90">90 results</option>
-                    <option value="100">100 results</option>
-                </select>
-                <div class="form-text text-muted">Higher values may take longer to process</div>
-            </div>
             <button type="submit" class="btn btn-success w-100">Search Businesses</button>
         </form>
         
@@ -178,8 +162,7 @@
                 body: JSON.stringify({
                     postal_codes: document.getElementById('postal_codes').value,
                     keywords: document.getElementById('keywords').value,
-                    country: chosenCountry,
-                    max_results: document.getElementById('max_results').value
+                    country: chosenCountry
                 })
             })
             .then(response => response.json())
@@ -189,7 +172,7 @@
                     document.getElementById('result').innerHTML = `<div class="alert alert-danger result-message">${data.error}</div>`;
                 } else {
                     // Sheet name to link (if possible)
-                    let sheet = data.sheet_name ? `<br><a class="btn btn-outline-success mt-2" href="https://docs.google.com/spreadsheets/d/${data.spreadsheet_id}/edit#gid=0" target="_blank">View Results in Google Sheets</a>` : '';
+                    let sheet = data.sheet_name ? `<br><a class="btn btn-outline-success mt-2" href="https://docs.google.com/spreadsheets/d/${'{{ spreadsheet_id }}'}/edit#gid=0" target="_blank">View Results in Google Sheets</a>` : '';
                     document.getElementById('result').innerHTML =
                         `<div class="alert alert-success result-message">${data.message}${sheet}</div>`;
                     // Confetti for first success!
@@ -204,4 +187,4 @@
         });
     </script>
 </body>
-</html> 
+</html>
