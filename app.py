@@ -6,8 +6,13 @@ from datetime import datetime
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from authlib.integrations.flask_client import OAuth
 from functools import wraps
-from dotenv import load_dotenv
 import traceback
+
+# Debug logging for environment variables
+print("----- ENV DEBUG -----")
+print("SECRET_KEY:", repr(os.getenv('SECRET_KEY')))
+print("All environment variables:", {k: v for k, v in os.environ.items() if not k.startswith('PYTHON')})  # Filter out Python-specific vars for clarity
+print("---------------------")
 
 def log_auth(step: str, error: bool = False, **kwargs):
     """Helper function to log authentication steps."""
@@ -23,10 +28,14 @@ def log_auth(step: str, error: bool = False, **kwargs):
             print(f"{key}: {value}")
     print(f"{line}\n")
 
-# Load environment variables
-load_dotenv()
-
+# Initialize Flask app
 app = Flask(__name__)
+
+# Only load dotenv in development
+if os.getenv('RENDER') is None:  # We're in development
+    from dotenv import load_dotenv
+    load_dotenv()
+
 try:
     app.secret_key = os.getenv('SECRET_KEY')
     if not app.secret_key:

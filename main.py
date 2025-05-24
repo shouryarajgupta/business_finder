@@ -7,7 +7,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import pandas as pd
-from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -17,6 +16,11 @@ import json
 import traceback
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+# Only load dotenv in development
+if os.getenv('RENDER') is None:  # We're in development
+    from dotenv import load_dotenv
+    load_dotenv()
+
 def log_step(step: str, error: bool = False):
     """Helper function to print visually distinct log messages."""
     line = "=" * 50
@@ -24,9 +28,6 @@ def log_step(step: str, error: bool = False):
     print(f"\n{line}")
     print(f"{status}: {step}")
     print(f"{line}\n")
-
-# Load environment variables
-load_dotenv()
 
 class BusinessFinder:
     def __init__(self):
