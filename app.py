@@ -86,22 +86,16 @@ def process_allowed_domains(domain_string: str) -> set:
             print(f"! Skipped invalid domain: {repr(domain)}")
     return domains
 
-# Get allowed emails from environment with multiple fallbacks
-raw_emails = os.getenv('ALLOWED_EMAILS')  # Try exact match first
-raw_domains = os.getenv('ALLOWED_DOMAINS')  # Try exact match first
+# Get configuration from environment
+raw_emails = os.getenv('ALLOWED_EMAILS', '')
+raw_domains = os.getenv('ALLOWED_DOMAINS', '')
 
 print(f"Raw ALLOWED_EMAILS value: {repr(raw_emails)}")
 print(f"Raw ALLOWED_DOMAINS value: {repr(raw_domains)}")
 
 # Process the emails and domains
-ALLOWED_EMAILS = process_allowed_emails(raw_emails) if raw_emails else set()
-ALLOWED_DOMAINS = process_allowed_domains(raw_domains) if raw_domains else {'thinkananta.com'}  # Default allowed domain
-
-# Fallback to default if no valid emails found
-if not ALLOWED_EMAILS:
-    default_admin = 'shouryarajgupta@gmail.com'
-    print(f"No valid emails found in environment, defaulting to admin: {default_admin}")
-    ALLOWED_EMAILS = {default_admin}
+ALLOWED_EMAILS = process_allowed_emails(raw_emails)
+ALLOWED_DOMAINS = process_allowed_domains(raw_domains)
 
 print(f"Final authorized emails ({len(ALLOWED_EMAILS)}):", sorted(list(ALLOWED_EMAILS)))
 print(f"Final authorized domains ({len(ALLOWED_DOMAINS)}):", sorted(list(ALLOWED_DOMAINS)))
@@ -202,6 +196,12 @@ def authorize():
         log_auth("User info retrieved", email=email)
         print(f"Checking authorization for: {email}")
         
+        # Check if any authorization rules are configured
+        if not ALLOWED_EMAILS and not ALLOWED_DOMAINS:
+            log_auth("No authorization rules configured", error=True)
+            return ("No authorization rules configured. Please set ALLOWED_EMAILS or ALLOWED_DOMAINS "
+                   "in the environment variables."), 403
+        
         # Check both specific email and domain
         email_domain = email.split('@')[-1].lower()
         is_allowed = email in ALLOWED_EMAILS or email_domain in ALLOWED_DOMAINS
@@ -223,8 +223,17 @@ def authorize():
                 domain=email_domain,
                 allowed_emails=sorted(list(ALLOWED_EMAILS)),
                 allowed_domains=sorted(list(ALLOWED_DOMAINS)))
-        return (f"Access denied. Your email ({email}) is not authorized. "
-                "Please contact the administrator to add your email or domain to the allowed list."), 403
+        
+        # Provide specific feedback about why access was denied
+        if ALLOWED_EMAILS and ALLOWED_DOMAINS:
+            message = (f"Access denied. Your email ({email}) is not in the allowed list "
+                      f"and your domain ({email_domain}) is not authorized.")
+        elif ALLOWED_EMAILS:
+            message = f"Access denied. Your email ({email}) is not in the allowed list."
+        else:  # ALLOWED_DOMAINS must be set due to earlier check
+            message = f"Access denied. Your domain ({email_domain}) is not authorized."
+            
+        return message + " Please contact the administrator.", 403
         
     except Exception as e:
         error_details = traceback.format_exc()
