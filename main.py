@@ -7,6 +7,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import pandas as pd
+from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -16,11 +17,6 @@ import json
 import traceback
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Only load dotenv in development
-if os.getenv('RENDER') is None:  # We're in development
-    from dotenv import load_dotenv
-    load_dotenv()
-
 def log_step(step: str, error: bool = False):
     """Helper function to print visually distinct log messages."""
     line = "=" * 50
@@ -28,6 +24,9 @@ def log_step(step: str, error: bool = False):
     print(f"\n{line}")
     print(f"{status}: {step}")
     print(f"{line}\n")
+
+# Load environment variables
+load_dotenv()
 
 class BusinessFinder:
     def __init__(self):
@@ -59,9 +58,10 @@ class BusinessFinder:
             self.sheets_service = self._initialize_sheets_service()
             print("✓ Google Sheets service initialized successfully")
             
-            self.MAX_RESULTS = 20
-            self.SEARCH_TIMEOUT = 60  # seconds
-            self.SHEET_NAME_MAX_LENGTH = 100  # Google Sheets limit
+            self.DEFAULT_MAX_RESULTS = 20
+            self.MAX_ALLOWED_RESULTS = 100
+            self.BASE_SEARCH_TIMEOUT = 60  # Base timeout for 20 results
+            self.MAX_SEARCH_TIMEOUT = 300  # Maximum timeout (5 minutes)
             
             log_step("BusinessFinder Initialization Complete")
             
@@ -196,11 +196,27 @@ class BusinessFinder:
             log_step(f"Failed to Create Sheet: {str(e)}", error=True)
             raise
 
-    def _search_with_timeout(self, postal_code: str, keywords: List[str], country: str) -> List[Dict]:
+    def _calculate_timeout(self, max_results: int) -> int:
+        """Calculate appropriate timeout based on number of results requested."""
+        if not max_results or max_results <= 20:
+            return self.BASE_SEARCH_TIMEOUT
+        
+        # Scale timeout linearly with number of results
+        scaled_timeout = int((max_results / 20) * self.BASE_SEARCH_TIMEOUT)
+        return min(scaled_timeout, self.MAX_SEARCH_TIMEOUT)
+
+    def _search_with_timeout(self, postal_code: str, keywords: List[str], country: str, max_results: int = None) -> List[Dict]:
         """Execute the search with a timeout for a single postal code."""
         result = []
         error_message = None
         
+        # Validate and set max_results
+        max_results = min(max_results or self.DEFAULT_MAX_RESULTS, self.MAX_ALLOWED_RESULTS)
+        
+        # Calculate appropriate timeout
+        search_timeout = self._calculate_timeout(max_results)
+        print(f"Using search timeout of {search_timeout} seconds for {max_results} results")
+
         def search_task():
             nonlocal result, error_message
             try:
@@ -228,37 +244,47 @@ class BusinessFinder:
                             radius=5000  # 5km radius
                         )
 
-                        places = places_result.get('results', [])[:self.MAX_RESULTS]
+                        places = places_result.get('results', [])[:max_results]
                         print(f"Found {len(places)} results for '{keyword}'")
 
-                        for place in places:
-                            try:
-                                place_details = self.gmaps.place(place['place_id'], 
-                                    fields=['name', 'formatted_address', 'formatted_phone_number', 
-                                           'website', 'url', 'business_status'])
+                        # Process places in chunks to manage memory
+                        chunk_size = min(5, max(2, max_results // 10))  # Adjust chunk size based on max_results
+                        for i in range(0, len(places), chunk_size):
+                            chunk = places[i:i + chunk_size]
+                            for place in chunk:
+                                try:
+                                    place_details = self.gmaps.place(place['place_id'], 
+                                        fields=['name', 'formatted_address', 'formatted_phone_number', 
+                                               'website', 'url', 'business_status'])
+                                    
+                                    details = place_details.get('result', {})
+                                    
+                                    business_info = {
+                                        'name': details.get('name', ''),
+                                        'address': details.get('formatted_address', ''),
+                                        'phone': details.get('formatted_phone_number', ''),
+                                        'website': details.get('website', ''),
+                                        'google_maps_url': details.get('url', ''),
+                                        'business_status': details.get('business_status', ''),
+                                        'postal_code': postal_code,
+                                        'keyword': keyword
+                                    }
+                                    
+                                    # Only extract email if website is available
+                                    if details.get('website'):
+                                        business_info['email'] = self._extract_email(details['website'])
+                                    else:
+                                        business_info['email'] = ''
+                                        
+                                    result.append(business_info)
+                                    print(f"Added business: {business_info['name']}")
+                                    
+                                except Exception as e:
+                                    print(f"Error processing place {place.get('place_id')}: {str(e)}")
+                                    continue
                                 
-                                details = place_details.get('result', {})
-                                
-                                business_info = {
-                                    'name': details.get('name', ''),
-                                    'address': details.get('formatted_address', ''),
-                                    'phone': details.get('formatted_phone_number', ''),
-                                    'website': details.get('website', ''),
-                                    'google_maps_url': details.get('url', ''),
-                                    'email': self._extract_email(details.get('website', '')),
-                                    'business_status': details.get('business_status', ''),
-                                    'postal_code': postal_code,
-                                    'keyword': keyword
-                                }
-                                result.append(business_info)
-                                print(f"Added business: {business_info['name']}")
-                                
-                                # Exponential backoff instead of fixed sleep
-                                time.sleep(min(1 * (1.5 ** len(result)), 5))
-                                
-                            except Exception as e:
-                                print(f"Error processing place {place.get('place_id')}: {str(e)}")
-                                continue
+                            # Adjust sleep time based on chunk size
+                            time.sleep(max(1, min(2, chunk_size / 3)))
                             
                     except Exception as e:
                         print(f"Error searching for keyword '{keyword}': {str(e)}")
@@ -273,17 +299,21 @@ class BusinessFinder:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(search_task)
             try:
-                future.result(timeout=self.SEARCH_TIMEOUT)
+                future.result(timeout=search_timeout)
             except (FuturesTimeoutError, TimeoutError) as e:
-                error_message = f"Search timed out after {self.SEARCH_TIMEOUT} seconds"
-                print(error_message)
+                print(f"Search timed out after {search_timeout} seconds")
+                # Return partial results if any
+                if result:
+                    print(f"Returning {len(result)} results collected before timeout")
+                    return result
+                error_message = f"Search timed out after {search_timeout} seconds"
 
         if not result and error_message:
             print(f"Error for postal code {postal_code}: {error_message}")
             
         return result
 
-    def search_businesses(self, postal_codes: List[str], keywords: List[str], country: str) -> List[Dict]:
+    def search_businesses(self, postal_codes: List[str], keywords: List[str], country: str, max_results: int = None) -> List[Dict]:
         """Search for businesses using Google Places API."""
         all_results = []
         errors = []
@@ -297,7 +327,7 @@ class BusinessFinder:
         for postal_code in postal_codes:
             postal_code = postal_code.strip()
             try:
-                results = self._search_with_timeout(postal_code, keywords, country)
+                results = self._search_with_timeout(postal_code, keywords, country, max_results)
                 all_results.extend(results)
             except Exception as e:
                 errors.append(f"Error searching {postal_code}: {str(e)}")
@@ -314,13 +344,22 @@ class BusinessFinder:
             return ''
             
         try:
-            response = requests.get(website, timeout=5)
+            # Add timeout and headers to avoid blocking
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(website, timeout=5, headers=headers)
             soup = BeautifulSoup(response.text, 'html.parser')
             email_pattern = r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}'
             
-            text_content = soup.get_text()
-            emails = re.findall(email_pattern, text_content)
+            # Only search in specific tags to reduce memory usage
+            text_content = ' '.join([
+                tag.get_text()
+                for tag in soup.find_all(['p', 'a', 'span', 'div'])
+                if tag.get_text()
+            ])
             
+            emails = re.findall(email_pattern, text_content)
             return emails[0] if emails else ''
             
         except Exception as e:
@@ -390,8 +429,14 @@ def main():
         
         country = input("Enter country code (US for USA, IN for India): ")
         
+        max_results = input("Enter max results (leave empty for default): ")
+        if max_results:
+            max_results = int(max_results)
+        else:
+            max_results = None
+        
         print("\nSearching for businesses... This may take a few minutes.")
-        businesses = finder.search_businesses(postal_codes, keywords, country)
+        businesses = finder.search_businesses(postal_codes, keywords, country, max_results)
         
         if businesses:
             print(f"\nFound {len(businesses)} businesses. Exporting to Google Sheets...")

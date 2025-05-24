@@ -47,13 +47,13 @@ except Exception as e:
 
 # OAuth Setup
 oauth = OAuth(app)
-ALLOWED_EMAILS = {os.getenv('ALLOWED_EMAIL', 'shouryarajgupta@gmail.com')}
+ALLOWED_EMAILS = set(email.strip() for email in os.getenv('ALLOWED_EMAIL', 'shouryarajgupta@gmail.com').split(','))
 log_auth("Allowed emails configured", emails=list(ALLOWED_EMAILS))
 
 # User class for Flask-Login
 class User(UserMixin):
     def __init__(self, email):
-        self.id = email
+        self.id = email.strip()  # Ensure email is stripped of whitespace
 
 # Flask-Login setup
 login_manager = LoginManager()
@@ -62,6 +62,7 @@ login_manager.login_view = 'login'
 
 @login_manager.user_loader
 def load_user(email):
+    email = email.strip()  # Ensure email is stripped of whitespace
     if email in ALLOWED_EMAILS:
         return User(email)
     return None
@@ -129,11 +130,11 @@ def authorize():
         # Use the correct OpenID Connect userinfo endpoint
         resp = google.get('https://openidconnect.googleapis.com/v1/userinfo')
         user_info = resp.json()
-        email = user_info.get('email')
+        email = user_info.get('email', '').strip()
         
         if not email:
             log_auth("No email in user info", error=True, user_info=user_info)
-            return "Email not provided by Google.", 400
+            return "Email not provided by Google. Please ensure you have granted email permission.", 400
             
         log_auth("User info retrieved", email=email)
         
@@ -144,14 +145,14 @@ def authorize():
             return redirect(url_for('home'))
             
         log_auth("Unauthorized email attempt", error=True, email=email)
-        return "Access denied. You are not authorized to use this application.", 403
+        return f"Access denied. Your email ({email}) is not authorized to use this application. Please contact the administrator.", 403
         
     except Exception as e:
         error_details = traceback.format_exc()
         log_auth("Authorization failed", error=True, 
                 error_message=str(e), 
                 error_details=error_details)
-        return redirect(url_for('login'))
+        return "Authentication failed. Please try again or contact the administrator.", 400
 
 @app.route('/logout')
 @login_required
@@ -174,34 +175,71 @@ def search():
         postal_codes = [code.strip() for code in data.get('postal_codes', '').split(',')]
         keywords = [keyword.strip() for keyword in data.get('keywords', '').split(',')]
         country = data.get('country', 'US')
-        print(f"Processed inputs - Postal codes: {postal_codes}, Keywords: {keywords}, Country: {country}")
+        max_results = data.get('max_results')
+        if max_results:
+            try:
+                max_results = int(max_results)
+            except ValueError:
+                max_results = None
+        
+        print(f"Processed inputs - Postal codes: {postal_codes}, Keywords: {keywords}, Country: {country}, Max Results: {max_results}")
 
         if not postal_codes or not keywords:
             return jsonify({'error': 'Missing postal codes or keywords'}), 400
+
+        # Validate input size
+        if len(postal_codes) > 5:
+            return jsonify({'error': 'Maximum 5 postal codes allowed per request'}), 400
+        if len(keywords) > 5:
+            return jsonify({'error': 'Maximum 5 keywords allowed per request'}), 400
 
         print("Initializing BusinessFinder...")
         finder = BusinessFinder()
         
         print("Starting business search...")
-        results = finder.search_businesses(postal_codes, keywords, country)
-        print(f"Search completed. Found {len(results)} results")
-        
-        print("Exporting to sheets...")
-        sheet_name = finder.export_to_sheets(results)
-        print(f"Export completed to sheet: {sheet_name}")
-        
-        return jsonify({
-            'success': True,
-            'message': f'Results exported to sheet: {sheet_name}',
-            'sheet_name': sheet_name
-        })
+        try:
+            results = finder.search_businesses(postal_codes, keywords, country, max_results)
+            print(f"Search completed. Found {len(results)} results")
+            
+            if not results:
+                return jsonify({
+                    'success': True,
+                    'message': 'No businesses found matching your criteria.',
+                    'results': []
+                })
+            
+            print("Exporting to sheets...")
+            sheet_name = finder.export_to_sheets(results)
+            print(f"Export completed to sheet: {sheet_name}")
+            
+            return jsonify({
+                'success': True,
+                'message': f'Results exported to sheet: {sheet_name}',
+                'sheet_name': sheet_name,
+                'spreadsheet_id': os.getenv('SPREADSHEET_ID'),
+                'result_count': len(results)
+            })
+            
+        except TimeoutError:
+            return jsonify({
+                'error': 'The search operation timed out. Please try with fewer postal codes or keywords.'
+            }), 408
+            
     except Exception as e:
         error_details = traceback.format_exc()
         print(f"Search error: {str(e)}")
         print(f"Error traceback: {error_details}")
+        
+        # Return a more user-friendly error message
+        error_message = str(e)
+        if "quota" in error_message.lower():
+            error_message = "API quota exceeded. Please try again later."
+        elif "timeout" in error_message.lower():
+            error_message = "The request timed out. Please try with fewer postal codes or keywords."
+        
         return jsonify({
-            'error': str(e),
-            'details': error_details
+            'error': error_message,
+            'details': error_details if os.getenv('FLASK_ENV') == 'development' else None
         }), 500
 
 # Error handlers

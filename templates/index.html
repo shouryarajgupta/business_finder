@@ -4,138 +4,202 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Business Finder</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
-            padding: 20px;
-            background-color: #f8f9fa;
-            font-family: Arial, sans-serif;
+            background: linear-gradient(120deg, #f8fafc 0%, #e0e7ff 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Inter', Arial, sans-serif;
         }
-        .container {
-            max-width: 800px;
-            background-color: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-            margin: 0 auto;
+        .card {
+            border-radius: 1.5rem;
+            box-shadow: 0 4px 32px 0 rgba(0,0,0,0.12);
+            padding: 2.5rem 2rem;
+            width: 100%;
+            max-width: 420px;
+            margin: auto;
+            background: white;
         }
-        .form-group {
-            margin-bottom: 20px;
+        .logo {
+            width: 42px;
+            margin-bottom: 1rem;
+        }
+        .headline {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+        .subtitle {
+            font-size: 1rem;
+            color: #64748b;
+            margin-bottom: 2rem;
+        }
+        .form-label {
+            font-weight: 600;
         }
         .result-message {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 5px;
+            margin-top: 18px;
+            padding: 1rem;
+            border-radius: 8px;
+            font-size: 1rem;
         }
-        .loading {
-            display: none;
-            text-align: center;
-            margin-top: 20px;
+        .fade-in {
+            animation: fadeIn 0.45s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px);}
+            to   { opacity: 1; transform: translateY(0);}
+        }
+        .spinner-border {
+            width: 2rem;
+            height: 2rem;
+        }
+        @media (max-width: 600px) {
+            .card {
+                padding: 1.2rem 0.8rem;
+            }
+            .headline { font-size: 1.4rem; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="card text-center">
+        <!-- Logo/branding -->
+        <img src="https://img.icons8.com/external-tal-revivo-bold-tal-revivo/32/000000/external-magnifying-glass-search-for-anything-zoom-bold-tal-revivo.png"
+             alt="Logo" class="logo">
+        <div class="headline">Business Finder</div>
+        <div class="subtitle">Find businesses instantly. Export to Google Sheets.</div>
+        
+        <!-- Authenticated user block -->
         {% if current_user.is_authenticated %}
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1 class="h3 mb-0">Business Finder</h1>
-            <div>
-                <span class="me-3">{{ current_user.id }}</span>
-                <a href="{{ url_for('logout') }}" class="btn btn-outline-danger btn-sm">Logout</a>
-            </div>
+        <div class="mb-3 text-end" style="font-size:0.98rem;">
+            <span class="fw-semibold" style="color:#334155;">{{ current_user.id }}</span>
+            <a href="{{ url_for('logout') }}" class="btn btn-outline-danger btn-sm ms-2">Logout</a>
         </div>
 
-        <form id="searchForm" class="mt-4">
-            <div class="form-group">
-                <label for="postal_codes">Postal Codes (comma-separated):</label>
-                <input type="text" class="form-control" id="postal_codes" name="postal_codes" required 
-                       placeholder="Enter postal codes (e.g., 12345, 67890)">
-                <small class="form-text text-muted">For US: 5 digits (e.g., 12345), For India: 6 digits (e.g., 110001)</small>
-            </div>
-
-            <div class="form-group">
-                <label for="keywords">Search Keywords (comma-separated):</label>
-                <input type="text" class="form-control" id="keywords" name="keywords" required
-                       placeholder="Enter keywords (e.g., restaurant, cafe)">
-            </div>
-
-            <div class="form-group">
-                <label for="country">Country:</label>
-                <select class="form-control" id="country" name="country">
-                    <option value="US">United States</option>
-                    <option value="IN">India</option>
+        <!-- Country selector is step 1 -->
+        <form id="step1" class="fade-in">
+            <div class="mb-4">
+                <label for="country" class="form-label">Choose your country:</label>
+                <select class="form-select" id="country" required>
+                    <option value="" disabled selected>Select</option>
+                    <option value="US">🇺🇸 United States</option>
+                    <option value="IN">🇮🇳 India</option>
                 </select>
             </div>
-
-            <button type="submit" class="btn btn-primary">Search</button>
+            <button type="submit" class="btn btn-primary w-100">Continue</button>
         </form>
 
-        <div id="loading" class="loading">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Loading...</span>
+        <!-- Step 2: Details, only shown after country selection -->
+        <form id="searchForm" class="fade-in" style="display:none;">
+            <div class="form-group mb-3">
+                <label id="postalLabel" for="postal_codes" class="form-label">Postal Code(s):</label>
+                <input type="text" class="form-control" id="postal_codes" name="postal_codes" required>
+                <div id="postalHint" class="form-text text-muted">Enter postal codes (comma-separated)</div>
             </div>
-            <p class="mt-2">Searching for businesses... This may take a few minutes.</p>
+            <div class="form-group mb-3">
+                <label for="keywords" class="form-label">Search Keywords:</label>
+                <input type="text" class="form-control" id="keywords" name="keywords" required
+                       placeholder="E.g. restaurant, cafe, school">
+                <div class="form-text text-muted">Comma-separated, e.g. restaurant, cafe</div>
+            </div>
+            <div class="form-group mb-3">
+                <label for="max_results" class="form-label">Number of Results:</label>
+                <select class="form-select" id="max_results" name="max_results" required>
+                    <option value="10">10 results</option>
+                    <option value="20" selected>20 results</option>
+                    <option value="30">30 results</option>
+                    <option value="40">40 results</option>
+                    <option value="50">50 results</option>
+                    <option value="60">60 results</option>
+                    <option value="70">70 results</option>
+                    <option value="80">80 results</option>
+                    <option value="90">90 results</option>
+                    <option value="100">100 results</option>
+                </select>
+                <div class="form-text text-muted">Higher values may take longer to process</div>
+            </div>
+            <button type="submit" class="btn btn-success w-100">Search Businesses</button>
+        </form>
+        
+        <div id="loading" class="loading" style="display:none;">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2">Searching for businesses... Please wait.</p>
         </div>
-
         <div id="result"></div>
-
         {% else %}
-        <div class="text-center">
-            <h1 class="mb-4">Welcome to Business Finder</h1>
-            <p>Please log in to continue:</p>
-            <a href="{{ url_for('google_login') }}" class="btn btn-primary">Login with Google</a>
+        <!-- Not authenticated -->
+        <div class="fade-in">
+            <h2 class="headline">Welcome to Business Finder</h2>
+            <p class="subtitle">Sign in with Google to continue.</p>
+            <a href="{{ url_for('google_login') }}" class="btn btn-primary w-100">Sign in with Google</a>
         </div>
         {% endif %}
     </div>
 
     <script>
-        document.getElementById('searchForm')?.addEventListener('submit', function(e) {
+        // Country selection flow
+        const countryForm = document.getElementById('step1');
+        const detailForm = document.getElementById('searchForm');
+        const countryInput = document.getElementById('country');
+        let chosenCountry = null;
+
+        // Show details form after country is chosen
+        countryForm?.addEventListener('submit', function(e) {
             e.preventDefault();
-            
-            const postalCodes = document.getElementById('postal_codes').value;
-            const keywords = document.getElementById('keywords').value;
-            const country = document.getElementById('country').value;
-            
-            // Show loading indicator
+            chosenCountry = countryInput.value;
+            if (!chosenCountry) return;
+            countryForm.style.display = 'none';
+            detailForm.style.display = 'block';
+            detailForm.classList.add('fade-in');
+            // Change postal label/hint based on country
+            if (chosenCountry === 'IN') {
+                document.getElementById('postalLabel').textContent = "PIN Code(s):";
+                document.getElementById('postal_codes').placeholder = "E.g. 110001, 560034";
+                document.getElementById('postalHint').textContent = "6-digit PIN codes, comma-separated";
+            } else {
+                document.getElementById('postalLabel').textContent = "Postal Code(s):";
+                document.getElementById('postal_codes').placeholder = "E.g. 12345, 90210";
+                document.getElementById('postalHint').textContent = "5-digit ZIP codes, comma-separated";
+            }
+            document.getElementById('keywords').focus();
+        });
+
+        // Business search form submit
+        detailForm?.addEventListener('submit', function(e) {
+            e.preventDefault();
             document.getElementById('loading').style.display = 'block';
             document.getElementById('result').innerHTML = '';
-            
             fetch('/search', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    postal_codes: postalCodes,
-                    keywords: keywords,
-                    country: country
+                    postal_codes: document.getElementById('postal_codes').value,
+                    keywords: document.getElementById('keywords').value,
+                    country: chosenCountry,
+                    max_results: document.getElementById('max_results').value
                 })
             })
             .then(response => response.json())
             .then(data => {
-                // Hide loading indicator
                 document.getElementById('loading').style.display = 'none';
-                
                 if (data.error) {
-                    document.getElementById('result').innerHTML = `
-                        <div class="alert alert-danger result-message">
-                            ${data.error}
-                        </div>`;
+                    document.getElementById('result').innerHTML = `<div class="alert alert-danger result-message">${data.error}</div>`;
                 } else {
-                    document.getElementById('result').innerHTML = `
-                        <div class="alert alert-success result-message">
-                            ${data.message}
-                        </div>`;
+                    // Sheet name to link (if possible)
+                    let sheet = data.sheet_name ? `<br><a class="btn btn-outline-success mt-2" href="https://docs.google.com/spreadsheets/d/${data.spreadsheet_id}/edit#gid=0" target="_blank">View Results in Google Sheets</a>` : '';
+                    document.getElementById('result').innerHTML =
+                        `<div class="alert alert-success result-message">${data.message}${sheet}</div>`;
+                    // Confetti for first success!
+                    if (window.confetti) window.confetti();
                 }
             })
             .catch(error => {
-                // Hide loading indicator
                 document.getElementById('loading').style.display = 'none';
-                
-                document.getElementById('result').innerHTML = `
-                    <div class="alert alert-danger result-message">
-                        An error occurred: ${error}
-                    </div>`;
+                document.getElementById('result').innerHTML =
+                    `<div class="alert alert-danger result-message">An error occurred: ${error}</div>`;
             });
         });
     </script>
