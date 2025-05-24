@@ -48,26 +48,33 @@ except Exception as e:
 # OAuth Setup
 oauth = OAuth(app)
 
-# Debug: Print raw environment variable
-raw_emails = os.getenv('ALLOWED_EMAILS', '')
-print(f"Raw ALLOWED_EMAILS value: {raw_emails}")
+# Debug: Print all environment variables (excluding sensitive ones)
+print("Available environment variables:", [k for k in os.environ.keys() if not any(x in k.lower() for x in ['key', 'secret', 'token', 'password'])])
+
+# Get allowed emails with detailed logging
+raw_emails = os.getenv('ALLOWED_EMAILS', None)
+if raw_emails is None:
+    print("WARNING: ALLOWED_EMAILS environment variable not found")
+    raw_emails = 'shouryarajgupta@gmail.com'  # Default if not set
+else:
+    print(f"Found ALLOWED_EMAILS in environment: {raw_emails}")
 
 # Process emails more carefully
 ALLOWED_EMAILS = set()
-if raw_emails:
-    for email in raw_emails.split(','):
-        cleaned_email = email.strip().lower()
-        if cleaned_email:  # Only add non-empty emails
-            ALLOWED_EMAILS.add(cleaned_email)
-            print(f"Added authorized email: {cleaned_email}")
-
-# Fallback if no valid emails found
-if not ALLOWED_EMAILS:
-    log_auth("No allowed emails configured, defaulting to admin email")
-    ALLOWED_EMAILS = {'shouryarajgupta@gmail.com'}  # Default admin email
+for email in raw_emails.split(','):
+    cleaned_email = email.strip().lower()
+    if cleaned_email:  # Only add non-empty emails
+        ALLOWED_EMAILS.add(cleaned_email)
+        print(f"Added authorized email: {cleaned_email}")
 
 print("Final authorized emails:", sorted(list(ALLOWED_EMAILS)))
 log_auth("Allowed emails configured", emails=sorted(list(ALLOWED_EMAILS)))
+
+# Also check if we're running on Render
+if os.getenv('RENDER') is not None:
+    print("Running on Render environment")
+    print("Render service name:", os.getenv('RENDER_SERVICE_NAME'))
+    print("Render external URL:", os.getenv('RENDER_EXTERNAL_URL'))
 
 # User class for Flask-Login
 class User(UserMixin):
