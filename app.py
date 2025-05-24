@@ -11,6 +11,7 @@ import traceback
 # Debug logging for environment variables
 print("----- ENV DEBUG -----")
 print("SECRET_KEY:", repr(os.getenv('SECRET_KEY')))
+print("ALLOWED_EMAILS raw value:", repr(os.getenv('ALLOWED_EMAILS')))
 print("All environment variables:", {k: v for k, v in os.environ.items() if not k.startswith('PYTHON')})  # Filter out Python-specific vars for clarity
 print("---------------------")
 
@@ -57,20 +58,31 @@ def process_allowed_emails(email_string: str) -> set:
     if not email_string:
         return emails
         
+    print(f"Processing email string: {repr(email_string)}")
     # Split by comma and handle optional spaces
     for email in email_string.split(','):
         cleaned_email = email.strip().lower()
         if cleaned_email and '@' in cleaned_email:  # Basic email validation
             emails.add(cleaned_email)
             print(f"✓ Added authorized email: {cleaned_email}")
+        else:
+            print(f"! Skipped invalid email: {repr(email)}")
     return emails
 
-# Get allowed emails from environment
-raw_emails = os.getenv('ALLOWED_EMAILS', '')
-print(f"Reading ALLOWED_EMAILS from environment: {raw_emails}")
+# Get allowed emails from environment with multiple fallbacks
+raw_emails = os.getenv('ALLOWED_EMAILS')  # Try exact match first
+if raw_emails is None:
+    # Try alternate cases if exact match fails
+    for var in os.environ:
+        if var.upper() == 'ALLOWED_EMAILS':
+            raw_emails = os.environ[var]
+            print(f"Found ALLOWED_EMAILS under different case: {var}")
+            break
+
+print(f"Raw ALLOWED_EMAILS value: {repr(raw_emails)}")
 
 # Process the emails
-ALLOWED_EMAILS = process_allowed_emails(raw_emails)
+ALLOWED_EMAILS = process_allowed_emails(raw_emails) if raw_emails else set()
 
 # Fallback to default if no valid emails found
 if not ALLOWED_EMAILS:
