@@ -51,24 +51,35 @@ oauth = OAuth(app)
 # Debug: Print all environment variables (excluding sensitive ones)
 print("Available environment variables:", [k for k in os.environ.keys() if not any(x in k.lower() for x in ['key', 'secret', 'token', 'password'])])
 
-# Get allowed emails with detailed logging
-raw_emails = os.getenv('ALLOWED_EMAILS', None)
-if raw_emails is None:
-    print("WARNING: ALLOWED_EMAILS environment variable not found")
-    raw_emails = 'shouryarajgupta@gmail.com'  # Default if not set
-else:
-    print(f"Found ALLOWED_EMAILS in environment: {raw_emails}")
+def process_allowed_emails(email_string: str) -> set:
+    """Process comma-separated email string into a set of valid emails."""
+    emails = set()
+    if not email_string:
+        return emails
+        
+    # Split by comma and handle optional spaces
+    for email in email_string.split(','):
+        cleaned_email = email.strip().lower()
+        if cleaned_email and '@' in cleaned_email:  # Basic email validation
+            emails.add(cleaned_email)
+            print(f"✓ Added authorized email: {cleaned_email}")
+    return emails
 
-# Process emails more carefully
-ALLOWED_EMAILS = set()
-for email in raw_emails.split(','):
-    cleaned_email = email.strip().lower()
-    if cleaned_email:  # Only add non-empty emails
-        ALLOWED_EMAILS.add(cleaned_email)
-        print(f"Added authorized email: {cleaned_email}")
+# Get allowed emails from environment
+raw_emails = os.getenv('ALLOWED_EMAILS', '')
+print(f"Reading ALLOWED_EMAILS from environment: {raw_emails}")
 
-print("Final authorized emails:", sorted(list(ALLOWED_EMAILS)))
-log_auth("Allowed emails configured", emails=sorted(list(ALLOWED_EMAILS)))
+# Process the emails
+ALLOWED_EMAILS = process_allowed_emails(raw_emails)
+
+# Fallback to default if no valid emails found
+if not ALLOWED_EMAILS:
+    default_admin = 'shouryarajgupta@gmail.com'
+    print(f"No valid emails found in environment, defaulting to admin: {default_admin}")
+    ALLOWED_EMAILS = {default_admin}
+
+print(f"Final authorized emails ({len(ALLOWED_EMAILS)}):", sorted(list(ALLOWED_EMAILS)))
+log_auth("Email authorization configured", emails=sorted(list(ALLOWED_EMAILS)))
 
 # Also check if we're running on Render
 if os.getenv('RENDER') is not None:
@@ -163,7 +174,8 @@ def authorize():
             return "Email not provided by Google. Please ensure you have granted email permission.", 400
             
         log_auth("User info retrieved", email=email)
-        print(f"Checking if email {email} is in allowed emails: {sorted(list(ALLOWED_EMAILS))}")
+        print(f"Checking authorization for: {email}")
+        print(f"Currently authorized emails: {sorted(list(ALLOWED_EMAILS))}")
         
         if email in ALLOWED_EMAILS:
             user = User(email)
@@ -171,8 +183,11 @@ def authorize():
             log_auth("User successfully authenticated", email=email)
             return redirect(url_for('home'))
             
-        log_auth("Unauthorized email attempt", error=True, email=email, allowed_emails=sorted(list(ALLOWED_EMAILS)))
-        return f"Access denied. Your email ({email}) is not authorized to use this application. Please contact the administrator.", 403
+        log_auth("Unauthorized email attempt", error=True, 
+                email=email, 
+                allowed_emails=sorted(list(ALLOWED_EMAILS)))
+        return (f"Access denied. Your email ({email}) is not authorized. "
+                "Please contact the administrator to add your email to the allowed list."), 403
         
     except Exception as e:
         error_details = traceback.format_exc()
