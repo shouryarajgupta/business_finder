@@ -5,7 +5,8 @@ google-api-python-client==2.86.0
 google-auth==2.17.3
 google-auth-oauthlib==1.0.0
 googlemaps==4.10.0
-pandas==1.5.3
+numpy==1.24.4
+pandas==2.0.3
 python-dotenv==1.0.0
 requests==2.31.0
 validate-email==1.3
