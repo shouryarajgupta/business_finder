@@ -47,7 +47,10 @@ except Exception as e:
 
 # OAuth Setup
 oauth = OAuth(app)
-ALLOWED_EMAILS = set(email.strip() for email in os.getenv('ALLOWED_EMAIL', 'shouryarajgupta@gmail.com').split(','))
+ALLOWED_EMAILS = set(email.strip().lower() for email in os.getenv('ALLOWED_EMAILS', '').split(',') if email.strip())
+if not ALLOWED_EMAILS:
+    log_auth("No allowed emails configured, defaulting to admin email")
+    ALLOWED_EMAILS = {'shouryarajgupta@gmail.com'}  # Default admin email
 log_auth("Allowed emails configured", emails=list(ALLOWED_EMAILS))
 
 # User class for Flask-Login

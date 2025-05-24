@@ -198,11 +198,14 @@ class BusinessFinder:
 
     def _calculate_timeout(self, max_results: int) -> int:
         """Calculate appropriate timeout based on number of results requested."""
-        if not max_results or max_results <= 20:
-            return self.BASE_SEARCH_TIMEOUT
-        
+        if not max_results or max_results <= 0:
+            max_results = self.DEFAULT_MAX_RESULTS
+            
         # Scale timeout linearly with number of results
-        scaled_timeout = int((max_results / 20) * self.BASE_SEARCH_TIMEOUT)
+        # Base: 60 seconds for 20 results
+        scaled_timeout = int((max_results / self.DEFAULT_MAX_RESULTS) * self.BASE_SEARCH_TIMEOUT)
+        
+        # Cap at maximum timeout
         return min(scaled_timeout, self.MAX_SEARCH_TIMEOUT)
 
     def _search_with_timeout(self, postal_code: str, keywords: List[str], country: str, max_results: int = None) -> List[Dict]:
